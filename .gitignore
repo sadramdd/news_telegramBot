@@ -1,0 +1,7 @@
+*.log
+*.pkl
+*.pth
+*.ipynb
+/__pycache__
+/.ipynb_checkpoints
+config.py
