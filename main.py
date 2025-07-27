@@ -9,6 +9,7 @@ import datetime
 from telebot.types import ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, BotCommand, KeyboardButton, ReplyKeyboardMarkup
 import logging
 import threading
+import sys
 print("importing done.")
 telebot_logger = logging.getLogger("TeleBot")
 telebot_logger.setLevel(logging.CRITICAL)
@@ -326,7 +327,6 @@ def send_news(m, cid=None):
     global topics
     if not cid:
         cid = int(m.chat.id)
-        user_id = int(m.from_user.id)
     
     status.pop(cid,None)
     
@@ -342,7 +342,7 @@ def send_news(m, cid=None):
         print(f"recommended topic: {recommended_topic}")
         
         if recommended_topic:
-            new_code = recommendation.recommend_news(recommended_topic, user_id)
+            new_code = recommendation.recommend_news(recommended_topic, cid)
             if not new_code:
                 
                 bot.send_message(cid, "در حال حاضر خبر جدیدی نیست 🔕")
@@ -354,7 +354,7 @@ def send_news(m, cid=None):
         try:
             new_tuple = DML.get_new_byNewcode(new_code)
                 
-            if DML.get_user_news_mode_byTelegramid(user_id)[0] == "full":
+            if DML.get_user_news_mode_byTelegramid(cid)[0] == "full":
                 new = new_tuple[1]
             else:
                 new = new_tuple[-1]
@@ -384,58 +384,94 @@ def send_news(m, cid=None):
         
     status[cid] = f"wait_response_{new_code}"
     
-"""
-user_minute_helper = {} # {cid: x_minutes_ago_sent}
-user_hour_helper = {} # {cid: {has_sent_in_hour: bool, hour:int(hour)}}
-def check_for_time():                
-    while True:
-        
-        #task 1, get all users minutes and hours (if they have) and store in dictionaries: {cid: [hours...]} and {cid: minute}
-        all_users = DML.get_users()
-        hours = {}
-        minute = {}
-        for user in all_users:
-            cid = int(user[0])
-            # check if user set minutes or not and add if true
-            user_minutes = DML.get_times(cid, mode="minutes")
-            if user_minutes:
-                minute[cid] = user_minutes[0]
-                
-            #check if user has set hours
-            user_hours = DML.get_times(cid, mode="hour")
-            if user_hours:
-                for hour in user_hours:
-                    hours.setdefault(cid, [])
-                    hours[cid].append(hour)
-        
-        #task2, check for hours
-        for cid, hours_list in hours.items():
-            now = datetime.datetime.now().hour
-            user_hour_helper.setdefault(cid, {"has_sent_in_hour": False, "hour": now})
+
+user_minute_helper = {}  # {cid: x_minutes_ago_sent}
+user_hour_helper = {}  # {cid: {has_sent_in_hour: bool, hour:int(hour)}}
+def check_for_time(): 
+    """
+    finds and sends news to users in times they set every 10 
+    """                
+    while True: 
+            #task 1, get all users minutes and hours (if they have) and store in dictionaries: {cid: [hours...]} and {cid: minute}
+            all_users = DML.get_users()
+            hours = {}
+            minute = {}
             
-            if user_hour_helper[cid]["hour"] != now:
-                user_hour_helper[cid] = {"has_sent_in_hour": True, "hour": now} 
-                
+            try:
+                for user in all_users:
+                    cid = int(user[0])
+                    # check if user set minutes or not and add if true
+                    user_minutes = DML.get_times(cid, mode="minutes")
+                    if user_minutes:
+                        minute[cid] = user_minutes[0]
+                        
+                    #check if user has set hours
+                    user_hours = DML.get_times(cid, mode="hour")
+                    if user_hours:
+                        for hour in user_hours:
+                            hours.setdefault(cid, [])
+                            hours[cid].append(hour)
+            except Exception as e:
+                #catching any errors and showing with caused line
+                _, _, exc_traceback = sys.exc_info()
+                line_number = exc_traceback.tb_lineno
+                print(f"error happend in while loop task 1: {e} line: {line_number}")
+                logging.error(f"error happend in while loop task 1: {e} line: {line_number}")
             
-            if now in hours_list and not user_hour_helper[cid]["has_sent_in_hour"]:
-                send_news(None, cid=cid)
-                user_hour_helper[cid] = {"has_sent_in_hour": True, "hour": now} 
-                     
-        #task3, check for minute
-        for cid, minute in hours.items():
-            user_minute_helper.setdefault(cid, 0)
-            if user_minute_helper[cid] >= minute:
-                send_news(None, cid=cid)
-                user_minute_helper[cid] = 0
-            else:
-                user_minute_helper[cid] += 10
-        time.sleep(10)
+            try:
+                #task2, check for hours
+                for cid, hours_list in hours.items():
+                    now = datetime.datetime.now().hour
+                    user_hour_helper.setdefault(cid, {"has_sent_in_hour": False, "hour": now})
+                    
+                    if user_hour_helper[cid]["hour"] != now:
+                        user_hour_helper[cid] = {"has_sent_in_hour": True, "hour": now} 
+                        
+                    
+                    if now in hours_list and not user_hour_helper[cid]["has_sent_in_hour"]:
+                        try:
+                            send_news(None, cid=cid)
+                        except Exception as e:
+                            bot.send_message(cid, "در حال حاضر خبر جدیدی نیست 🔕")
+                        print("news sent")
+                        user_hour_helper[cid] = {"has_sent_in_hour": True, "hour": now} 
+                        
+            except Exception as e:
+                #catching any errors and showing with caused line
+                _, _, exc_traceback = sys.exc_info()
+                line_number = exc_traceback.tb_lineno
+                print(f"error happend in while loop task 2: {e} line: {line_number}")
+                logging.error(f"error happend in while loop task 2: {e} line: {line_number}")
                 
+            try:           
+                #task3, check for minute
+                for cid, minute in minute.items():
+                    user_minute_helper.setdefault(cid, 0)
+                    if user_minute_helper[cid] >= minute * 60: # convert minutes into second beacuse last sent are stred as seconds
+                        
+                        try:
+                            send_news(None, cid=cid)
+                            print("news sent in minutes")
+                        except Exception as e:
+                            bot.send_message(cid, "در حال حاضر خبر جدیدی نیست 🔕")
+                            
+                        user_minute_helper[cid] = 10
+                    else:
+                        user_minute_helper[cid] += 10
+                time.sleep(10)
             
-                
-"""              
-                
-    
+            except Exception as e:
+                #catching any errors and showing with caused line
+                _, _, exc_traceback = sys.exc_info()
+                line_number = exc_traceback.tb_lineno
+                print(f"error happend in  while loop task 3: {e} line: {line_number}")
+                logging.error(f"error happend in while loop task 3: {e} line: {line_number}")
+                       
+                       
+                       
+#error happend in while loop task 2: cannot access local variable 'user_id' where it is not associated with a value
+#error happend in  while loop task 3: '>=' not supported between instances of 'int' and 'list' 
+                       
     
 # response/save callback handler
 @bot.callback_query_handler(func=lambda call: "response" in call.data)
@@ -586,6 +622,7 @@ def command_topic(m):
 def command_start(m):
     """
     handles the /start command and new user signup
+    
     """
     global topics
     
@@ -689,8 +726,9 @@ def gen_c_markup(cid):
     return markup
 
 @bot.message_handler(func=lambda message: message.text == "زمان گذاری ⏲️")
-def set_timer(m):
-    cid = int(m.chat.id)
+def set_timer(m, cid=None):
+    if m:
+        cid = int(m.chat.id)
     
     if check_for_spam(cid): return
     add_spam(cid)
@@ -704,7 +742,9 @@ def handle_time_callback(call):
         cid = int(call.message.chat.id)
         mid = int(call.message.message_id)
         data = call.data
-        if data == "time_hour":
+        if data == "invoke_timer_func":
+            set_timer(None, cid=cid)
+        elif data == "time_hour":
             if DML.has_times(cid):
                 selected = DML.get_times(cid)
                 selected_time_helper[cid] = selected
@@ -718,7 +758,7 @@ def handle_time_callback(call):
         elif data == "time_minutes":
             C_markup = gen_c_markup(cid=cid)
             bot.edit_message_text("(دقیقه باید کمتر از 500 باشد) لطفا دقیقه مورد نظر خود را به انگلیسی بنویسید", cid, mid, reply_markup=C_markup)
-            status[cid] = f"type_minutes_{call.id}"
+            status[cid] = f"type_minutes_{call.id}_{mid}"
             
         elif data == "time_back":
             A_markup = gen_a_markup()
@@ -730,6 +770,8 @@ def handle_time_callback(call):
         elif data == "confirm_time":
             hours = selected_time_helper.get(cid)
             if hours:
+                if DML.has_times(cid):
+                    DML.delete_time(cid, mode="hour")
                 for hour in hours:
                     DML.add_times(cid, int(hour), mode="hour")
                 bot.edit_message_text("☑️ ساعت ها با موفقیت ثبت شد ☑️",cid, mid, reply_markup=None)
@@ -738,7 +780,6 @@ def handle_time_callback(call):
                 bot.edit_message_text("☑️ ساعت ها با موفقیت ثبت شد ☑️",cid, mid, reply_markup=None)
                 selected_time_helper.pop(cid, None)
                 #bot.answer_callback_query(call.id, "💢 باید حداقل یک گزینه انتخاب شود 💢")      
-                                 
         else:
             hour = int(data.split("_")[-1])
             if data.split("_")[0] == "add":
@@ -763,8 +804,8 @@ def handle_minutes_message(message):
         cid = int(message.chat.id)
         minutes = str(message.text)
 
-        callid = status.get(message.chat.id).split("_")[-1]
-        
+        callid = status.get(message.chat.id).split("_")[-2]
+        mid = status.get(message.chat.id).split("_")[-1]
         if not minutes.isdigit():
             bot.answer_callback_query(callid, "💢 لطفا دقیقه به انگلیسی باشد 💢")
             status.pop(cid, None)
@@ -774,11 +815,14 @@ def handle_minutes_message(message):
             status.pop(cid, None)
             return
         
-        bot.answer_callback_query(callid, f"✔️ ربات هر {minutes} دقیقه برای شما پیام ارسال خواهد کرد")
-        
         if DML.has_times(cid):
-            DML.delete_minutes(cid)
-        DML.add_times(cid, int(minutes), mode="minutes")
+            DML.delete_time(cid, mode="minutes")
+        added = DML.add_times(cid, int(minutes), mode="minutes")
+        if added:
+            bot.answer_callback_query(callid, f"✔️ ربات هر {minutes} دقیقه برای شما پیام ارسال خواهد کرد")
+            bot.edit_message_text(f" :برای تغییر زمان گذاری \n ✔️ زمان گذاری با موفقیت انجام شد ✔️", cid, mid, reply_markup="invoke_timer_func")
+        else:
+            bot.answer_callback_query(callid, "💢در حال حاضر مشکلی پیش آمده💢")
         status.pop(cid, None)
     except Exception as e:
         print(f"error happend while handling users minute input: {e}")
@@ -795,6 +839,7 @@ def handle_all(m):
     add_spam(cid)
     bot.send_message(cid, "لطفا فقط از دستور بات استفاده نمایید. 🎗️")
     
+threading.Thread(target=check_for_time).start()
     
 
 #----------------------------------------------

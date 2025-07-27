@@ -61,8 +61,6 @@ def add_user_topic_ByTelgramid(telegramid: int, topic: str):
         values = (telegramid, topic_id)
         cursor.execute(query, values)
         connection.commit()
-        print(f"user topic added")
-        logging.info(f"user topic added")
         
     except mysql.connector.Error as sqlerror:
         print(f"mysql error occurred: {sqlerror}")
@@ -227,9 +225,8 @@ def add_times(telegramid: int, value: int, mode: str):
 def get_users():
     try:
         connection = mysql.connector.connection.MySQLConnection(**DB_CONFIG)
-        cursor = connection.cursor(dictionary=True)
+        cursor = connection.cursor()
 
-        hours = []
         # Get topic IDs
         cursor.execute("select TELEGRAM_ID from user")
         result = cursor.fetchall()
@@ -829,12 +826,12 @@ def delete_news(newcode):
         if 'connection' in locals() and connection.is_connected():
             connection.close() 
             
-def delete_minutes(telegramid):
+def delete_time(telegramid, mode="minutes"):
     try:
         connection = mysql.connector.connection.MySQLConnection(**DB_CONFIG)
         cursor = connection.cursor()
-        query = "DELETE FROM user_timer WHERE TELEGRAM_ID = %s AND MODE = 'minute'"
-        cursor.execute(query, (telegramid, ))
+        query = "DELETE FROM user_timer WHERE TELEGRAM_ID = %s AND MODE = %s"
+        cursor.execute(query, (telegramid, mode))
         connection.commit()
         
     except mysql.connector.Error as sqlerror:
