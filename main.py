@@ -5,11 +5,12 @@ from models import sentiment_model
 import telebot
 from telebot import types
 import time
-import datetime
+import datetime 
 from telebot.types import ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, BotCommand, KeyboardButton, ReplyKeyboardMarkup
 import logging
 import threading
 import sys
+from API import main_loop
 print("importing done.")
 telebot_logger = logging.getLogger("TeleBot")
 telebot_logger.setLevel(logging.CRITICAL)
@@ -37,16 +38,16 @@ for handler in sql_logger.handlers:
      
     
 def escape_markdown(text):
-    escape_chars = r"_*[]()~`>#+-=|{}.!\\"
-    return ''.join([f"\\{x}" if x in escape_chars else x for x in text])
-            
+    escape_chars = r'_[]()~`>#+-=|{}.!*'
+    return ''.join(['\\' + c if c in escape_chars else c for c in text])
+
 
 
 
 # User status storage
 status = {} # {cid: status, ...}
 
-spammer_identifier = {}# {cid: {"previous_time": None, "rate": 0, "has_sent_ban_message": False}, ...}
+spammer_identifier = {}# {cid: {"previous_time": None, "rate": 0, "has_sent_ban_message": False, "has_sent_warning": False, banned_until: None}, ...}
 
 selected_topics_helper = {} # {cid: [selected topics, ...]}
 
@@ -96,44 +97,117 @@ bot.set_update_listener(listener=listen)
 
 
 
+import time
+import logging
+
+# You must define these elsewhere in your code
+# spammer_identifier = {}
+# spam_time_rate = seconds between messages considered spammy
+# spam_rate = spam count threshold
 
 def add_spam(cid):
     """
-    this function adds newest user message to spam detection dictionary
+    This function adds the newest user message to the spam detection dictionary.
     """
     try:
         global spammer_identifier
-        spammer_identifier.setdefault(cid, {"previous_time": None, "rate": 0, "has_sent_ban_message": False})
-        
-        now = time.time()
-        pre_time = spammer_identifier[cid]["previous_time"]
-        
-        if pre_time is not None:
-            diff = now - pre_time
-            
-            if diff <= spam_time_rate:
-                spammer_identifier[cid]["rate"] += 1
-            else:
-                bonus = (diff * 0.5) // 2
-                spammer_identifier[cid]["rate"] = max(0, spammer_identifier[cid]["rate"] - bonus)
-        else:
-            spammer_identifier[cid]["rate"] = 0
+        spammer_identifier.setdefault(cid, {
+            "previous_time": None,
+            "rate": 0,
+            "has_sent_ban_message": False,
+            "has_sent_warning": False,
+            "banned_until": 0,
+            "banned": False
+        })
 
-        spammer_identifier[cid]["previous_time"] = now
+        now = time.time()
+        user = spammer_identifier[cid]
+
+        # Reset if ban expired
+        if user["banned"] and now > user["banned_until"]:
+            spammer_identifier[cid] = {
+                "previous_time": None,
+                "rate": 0,
+                "has_sent_ban_message": False,
+                "has_sent_warning": False,
+                "banned_until": 0,
+                "banned": False
+            }
+            user = spammer_identifier[cid]
+
+        pre_time = user["previous_time"]
+
+
+        if pre_time is not None:
+            
+            diff = now - pre_time # calculate difference 
+            if diff <= spam_time_rate: # if diffrence is higher than treshold, add one to rate
+                user["rate"] += 1
+            else: # if it is lower than treshold, calculate the diffrence bonus and minus minus rate of bonus
+                bonus = (diff * 0.5) // 2
+                user["rate"] = max(0, user["rate"] - bonus)
+                
+        else: # that means user didn't sent anything yet or just got unbanned!
+            user["rate"] = 0
+
+        user["previous_time"] = now
+        spammer_identifier[cid] = user
+        print(spammer_identifier)
+
     except Exception as e:
-        print(f"error hapend while adding spams: {e}")
+        print(f"Error happened while adding spam info: {e}")
+
+
 
 def check_for_spam(chat_id):
+    """
+    Checks if the user should be banned due to spamming.
+    Returns True if the user is currently banned.
+    """
     try:
-        if spammer_identifier.get(chat_id)["rate"] > spam_rate:
-            if not spammer_identifier[chat_id]["has_sent_ban_message"]:
-                bot.send_message("💢شما بخاطر اسپم دادن مسدود شدید💢")
-                spammer_identifier[chat_id]["has_sent_ban_message"] = True
-            logging.DEBUG(f"user: {chat_id} is BANNED")
-            return True
+        user_data = spammer_identifier.get(chat_id, {})
+        now = int(time.time())
+
+        if user_data:
+            # If already banned, check if the ban is still active
+            if user_data.get("banned", False):
+                if now < user_data.get("banned_until", 0): # time hasn't come to Unban
+                    return True  # Still banned
+                else:
+                    # Unban the user
+                    user_data["banned"] = False
+                    user_data["rate"] = 0
+                    user_data["has_sent_ban_message"] = False
+                    spammer_identifier[chat_id] = user_data
+
+            rate = int(user_data.get("rate", 0))
+
+            # Check if spam rate exceeded
+            if rate >= spam_rate:
+                
+                user_data["banned"] = True
+                user_data["banned_until"] = now + 5 * 3600  # 5 hours ban
+                
+                if not user_data.get("has_sent_ban_message", False):
+                    bot.send_message(chat_id, "💢 شما بخاطر اسپم دادن تا ۵ ساعت دیگر مسدود شدید 💢")
+                    user_data["has_sent_ban_message"] = True
+                spammer_identifier[chat_id] = user_data
+                logging.debug(f"user: {chat_id} is BANNED")
+                return True
+
+            # Optional warning if close to spam threshold
+            elif rate >= spam_rate // 2 and not user_data.get("has_sent_warning", False):
+                bot.send_message(chat_id, "💢 هشدار! لطفاً اسپم ندهید 💢")
+                user_data["has_sent_warning"] = True
+                spammer_identifier[chat_id] = user_data
+
         return False
-    except:
+
+    except Exception as e:
+        logging.error(f"Error in check_for_spam: {e}")
         return False
+
+
 
 
 def send_news_function(cid,image_url, new,
@@ -150,13 +224,13 @@ def send_news_function(cid,image_url, new,
             # edit photo
             bot.edit_message_media(media=media, chat_id=cid, message_id=picture_mid)
             #edit photo caption
-            bot.edit_message_caption(f"**{escape_markdown(title)}**", cid, picture_mid, parse_mode="MarkdownV2")
+            bot.edit_message_caption(f"*{escape_markdown(title)}*", cid, picture_mid, parse_mode="MarkdownV2")
             # edit text messgae
             bot.edit_message_text(new_text,cid,text_mid, reply_markup=markup)
 
         else:
             # send photo with caption = title
-            picture = bot.send_photo(cid, image_url, caption=f"**{escape_markdown(title)}**", parse_mode="MarkdownV2") 
+            picture = bot.send_photo(cid, image_url, caption=f"*{escape_markdown(title)}*", parse_mode="MarkdownV2") 
             # send text message
             message = bot.send_message(cid, new_text,reply_markup=markup)
             # save the text mid to picture mid
@@ -192,7 +266,8 @@ def send_news_function(cid,image_url, new,
 def command_help(m):
     cid = int(m.chat.id)
 
-    if check_for_spam(cid): return
+    if check_for_spam(cid):
+        return
     add_spam(cid)
     
     status.pop(cid,None)
@@ -209,7 +284,8 @@ def command_help(m):
 def command_news_mode(m):
     cid = int(m.chat.id)
     status.pop(cid,None)
-    if check_for_spam(cid): return
+    if check_for_spam(cid):
+        return
     add_spam(cid)
     mode_markup = InlineKeyboardMarkup()
     mode_btn1 = InlineKeyboardButton("خلاصه خبر 🗞️", callback_data="change_to_summarized_news_mode")
@@ -278,7 +354,8 @@ def command_see_saved(m):
     
     status.pop(cid,None)
 
-    if check_for_spam(cid): return
+    if check_for_spam(cid):
+        return
     add_spam(cid)
     gen_saved_page(cid,user_id, 1, firsttime=True)
         
@@ -330,7 +407,8 @@ def send_news(m, cid=None):
     
     status.pop(cid,None)
     
-    if check_for_spam(cid): return
+    if check_for_spam(cid):
+        return
     
     add_spam(cid)
     bot.send_message(cid, "لطفا منتظر بمانید ⭕")
@@ -396,7 +474,6 @@ def check_for_time():
             all_users = DML.get_users()
             hours = {}
             minute = {}
-            
             try:
                 for user in all_users:
                     cid = int(user[0])
@@ -529,7 +606,8 @@ def store_new_interaction(m):
         cid = int(m.chat.id)
         mid = status[cid].split("_")[0]
 
-        if check_for_spam(cid): return
+        if check_for_spam(cid):
+            return
         
         add_spam(cid)
         pred = sentiment_model.predict(m.text, return_soft_en_prediction=True) # predict the emotion of sentence (positive/negative)
@@ -579,7 +657,8 @@ def command_topic(m):
         user_id = int(m.from_user.id)
         
         
-        if check_for_spam(cid): return
+        if check_for_spam(cid):
+            return
         
         add_spam(cid)
         text2 = "شما میتونید سرفصل های مورد علاقع خود را انتخاب کنید"
@@ -624,36 +703,40 @@ def command_start(m):
     handles the /start command and new user signup
     
     """
-    global topics
-    
-    cid = int(m.chat.id)
-    
-    status.pop(cid,None)
-    
-    text = """
-    📢 به ربات خبررسان خوش آمدید!
-    با استفاده از این ربات می‌توانید به راحتی به اخبار روز دسترسی داشته باشید، آن‌ها را ذخیره کنید، نظر خود را ثبت کنید و حتی حالت نمایش خبر (خلاصه یا کامل) را تغییر دهید.
-    📌 امکانات ربات:
-    - دریافت اخبار جدید بر اساس علایق شما
-    - ذخیره‌سازی اخبار برای مطالعه بعدی
-    - ثبت بازخورد مثبت، منفی یا نوشتاری برای هر خبر
-    - تغییر حالت نمایش به خلاصه یا کامل
-    - مرور اخبار ذخیره‌شده با قابلیت ورق‌زدن بین صفحات
-    🧠 ربات با یادگیری از بازخوردهای شما، اخبار بهتری پیشنهاد خواهد داد!
-    """
-    
-    
-    if check_for_spam(cid): return
-    
+    try:
+        global topics
+        
+        cid = int(m.chat.id)
+        
+        status.pop(cid,None)
+        
+        text = "\n 📢 *به ربات خبررسان خوش آمدید*"
+        text_2 = """
+        با استفاده از این ربات می‌توانید به راحتی به اخبار روز دسترسی داشته باشید، آن‌ها را ذخیره کنید، نظر خود را ثبت کنید و حتی حالت نمایش خبر (خلاصه یا کامل) را تغییر دهید.
+        📌 امکانات ربات:
+        - دریافت اخبار جدید بر اساس علایق شما
+        - ذخیره‌سازی اخبار برای مطالعه بعدی
+        - ثبت بازخورد مثبت، منفی یا نوشتاری برای هر خبر
+        - تغییر حالت نمایش به خلاصه یا کامل
+        - مرور اخبار ذخیره‌شده با قابلیت ورق‌زدن بین صفحات
+        🧠 ربات با یادگیری از بازخوردهای شما، اخبار بهتری پیشنهاد خواهد داد!
+        """
+        
+        if check_for_spam(cid):
+            return
+        
 
-    add_spam(cid)
-    keyboard_markup = ReplyKeyboardMarkup()
-    for command in commands:
-        keyboard_markup.add(KeyboardButton(command))
-    
-    bot.send_message(cid, text, reply_markup=keyboard_markup)
-    command_topic(m)
-    
+        add_spam(cid)
+        keyboard_markup = ReplyKeyboardMarkup()
+        for command in commands:
+            keyboard_markup.add(KeyboardButton(command))
+        
+        bot.send_message(cid, text + escape_markdown(text_2), reply_markup=keyboard_markup, parse_mode="MarkdownV2")
+        command_topic(m)
+    except Exception as e:
+        print(f"error happend in start command: {e}")
+        logging.error(f"error happend in start command: {e}")
+        
 
 
 @bot.callback_query_handler(func=lambda call: "topic" in call.data)
@@ -730,7 +813,8 @@ def set_timer(m, cid=None):
     if m:
         cid = int(m.chat.id)
     
-    if check_for_spam(cid): return
+    if check_for_spam(cid):
+        return
     add_spam(cid)
     A_markup = gen_a_markup()
     bot.send_message(cid, "⏰لطفا یکی از گزینه ها رو انتخاب کنید⏰", reply_markup=A_markup)
@@ -835,11 +919,13 @@ def handle_minutes_message(message):
 def handle_all(m):
     cid = int(m.chat.id)
 
-    if check_for_spam(cid): return
+    if check_for_spam(cid):
+        return
     add_spam(cid)
     bot.send_message(cid, "لطفا فقط از دستور بات استفاده نمایید. 🎗️")
     
-threading.Thread(target=check_for_time).start()
+threading.Thread(target=check_for_time).start() # checks for user times to send news
+threading.Thread(target=main_loop).start() # gets news from rss feed every 20 mins
     
 
 #----------------------------------------------

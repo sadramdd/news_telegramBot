@@ -74,20 +74,6 @@ def remove_duplicate(text: str):
 
 
 
-    
-    title = first_entry["title"]
-    content_link = first_entry["links"][0]["href"]
-    document = get_full_document(content_link)
-    summary = first_entry["summary"]
-    raw_topic =  first_entry["tags"][0]["term"]
-    topic = raw_topic[0:raw_topic.index(">")-1]
-    print(document)
-    #print(f"""title:\n {title}
-          #\n\n content :\n {content_link} \n\n  \n\n
-          #description:\n {summary} \n\n topic: \n{topic}""")
-
-
-
 
 def main_loop():
     logging.getLogger('selenium').setLevel(logging.CRITICAL)
