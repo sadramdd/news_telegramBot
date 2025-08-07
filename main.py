@@ -1,7 +1,7 @@
 import DML
 from config import BOTTOKEN, topics, spam_rate, spam_time_rate
 import recommendation
-from models import sentiment_model
+#from models import sentiment_model
 import telebot
 from telebot import types
 import time
@@ -14,7 +14,6 @@ from API import main_loop
 print("importing done.")
 telebot_logger = logging.getLogger("TeleBot")
 telebot_logger.setLevel(logging.CRITICAL)
-
 # Remove any handlers attached to it
 for handler in telebot_logger.handlers:
     telebot_logger.removeHandler(handler)
@@ -152,7 +151,6 @@ def add_spam(cid):
 
         user["previous_time"] = now
         spammer_identifier[cid] = user
-        print(spammer_identifier)
 
     except Exception as e:
         print(f"Error happened while adding spam info: {e}")
@@ -195,7 +193,7 @@ def check_for_spam(chat_id):
                 logging.debug(f"user: {chat_id} is BANNED")
                 return True
 
-            # Optional warning if close to spam threshold
+            # optional warning if close to spam threshold
             elif rate >= spam_rate // 2 and not user_data.get("has_sent_warning", False):
                 bot.send_message(chat_id, "💢 هشدار! لطفاً اسپم ندهید 💢")
                 user_data["has_sent_warning"] = True
@@ -214,7 +212,7 @@ def send_news_function(cid,image_url, new,
                        title, markup=None, sentiment_message="",
                        new_code=None, firsttime=True, picture_mid=None,
                        text_mid=None, save_interacion=True):
-    new_text = f"{new} \n " + sentiment_message 
+    new_text = escape_markdown(f"{new} \n " + f"*{sentiment_message}*")
     sent = False
     if len(new_text) >= 4096:
         return False
@@ -226,13 +224,13 @@ def send_news_function(cid,image_url, new,
             #edit photo caption
             bot.edit_message_caption(f"*{escape_markdown(title)}*", cid, picture_mid, parse_mode="MarkdownV2")
             # edit text messgae
-            bot.edit_message_text(new_text,cid,text_mid, reply_markup=markup)
+            bot.edit_message_text(new_text,cid,text_mid, reply_markup=markup, parse_mode="MarkdownV2")
 
         else:
             # send photo with caption = title
             picture = bot.send_photo(cid, image_url, caption=f"*{escape_markdown(title)}*", parse_mode="MarkdownV2") 
             # send text message
-            message = bot.send_message(cid, new_text,reply_markup=markup)
+            message = bot.send_message(cid, new_text,reply_markup=markup, parse_mode="MarkdownV2")
             # save the text mid to picture mid
             saved_news_to_img[message.message_id] = picture.message_id
             sent = True
@@ -241,17 +239,17 @@ def send_news_function(cid,image_url, new,
         print(f"photo sending failed: {e}")        
         if not firsttime:
             # just edit the text message because there is no image 
-            bot.edit_message_text(new_text,cid,text_mid, reply_markup=markup)
+            bot.edit_message_text(new_text,cid,text_mid, reply_markup=markup, parse_mode="MarkdownV2")
             
             try:
                 bot.delete_message(cid, picture)
             except Exception as e:
                 print(f"can't delete news photo: {e}")
-                logging.ERROR(f"can't delete news photo: {e}")
+                logging.error(f"can't delete news photo: {e}")
                 
         else:
             # just send the text message
-            bot.send_message(cid, new_text, reply_markup=markup)
+            bot.send_message(cid, new_text, reply_markup=markup, parse_mode="MarkdownV2")
             sent = True
             
             
@@ -461,7 +459,87 @@ def send_news(m, cid=None):
         DML.delete_news(new_code)
         
     status[cid] = f"wait_response_{new_code}"
+                       
     
+# response/save callback handler
+@bot.callback_query_handler(func=lambda call: "response" in call.data)
+def handle_response_callback(call):
+    user_id = int(call.from_user.id)
+    mid = int(call.message.message_id)
+    cid = int(call.message.chat.id)
+    data = str(call.data)
+    if data.startswith("response_save_new_"):
+        
+        new_code = int(data.split("_")[-1])
+        saved_news = [x[0] for x in DML.get_saved_newsbyTelegramid_generator(user_id)] # because the generator yields tuples
+        if new_code not in saved_news:
+            DML.add_saved_news(new_code, user_id)
+            bot.answer_callback_query(call.id, "ذخیره شد ✔️")
+        else:
+            bot.answer_callback_query(call.id, "این خبر قبلا ذخیره شده 💢")
+            
+        
+    elif call.data.startswith("positive_response_"):
+        
+        new_code = data.split("_")[-1]
+        
+        DML.change_interaction(user_id, int(new_code), "positive")
+        bot.answer_callback_query(call.id, "از اهمیت شما متشکریم 🎗️")
+        bot.edit_message_reply_markup(cid, mid, 
+                                      reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("📂 ذخیره", callback_data=f"response_save_new_{new_code}")))
+        status.pop(cid,  None)   
+        
+    elif call.data.startswith("negative_response_"):
+        
+        new_code = data.split("_")[-1]
+        
+        DML.change_interaction(user_id, int(new_code), "negative")
+        bot.answer_callback_query(call.id, "از اهمیت شما متشکریم 🎗️")
+        bot.edit_message_reply_markup(cid, mid, 
+                                      reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("📂 ذخیره", callback_data=f"response_save_new_{new_code}")))
+        status.pop(cid,  None)   
+        
+    elif data.startswith("write_response_"):
+        new_code = data.split("_")[-1]
+        bot.send_message(cid, "📝نظر خود را بنویسید: ")
+        status[cid] = f"{mid}_wait_comment_{new_code}"
+   
+
+# writing response handler
+@bot.message_handler(func= lambda m: "comment" in status.get(m.chat.id, " "))
+def store_new_interaction(m):
+    """
+    if users status if about writing their response to the shown news,
+    this function will save the entered response analyse to datatbase 
+    
+    """
+    cid = int(m.chat.id)
+    bot.send_message(cid, "در حال حاضر این سرویس فعال نمیباشد!")
+    status.pop(cid) # clear users status
+    return None
+    try:
+        mid = status[cid].split("_")[0]
+
+        if check_for_spam(cid):
+            return
+        
+        add_spam(cid)
+        pred = sentiment_model.predict(m.text, return_soft_en_prediction=True) # predict the emotion of sentence (positive/negative)
+        
+        new_code = status[cid].split("_")[-1]
+        DML.change_interaction(cid, int(new_code), str(pred)) # store to database
+        
+        bot.send_message(cid, "از اهمیت شما متشکریم 🎗️") 
+        bot.edit_message_reply_markup(cid, mid, 
+                                      reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("📂 ذخیره", callback_data=f"response_save_new_{new_code}")))
+        
+        status.pop(cid) # clear users status
+        
+    except Exception as e:
+        print(f"error happend while handling user comment: \n {e}")
+        logging.ERROR(f"error happend while handling user comment: {e}")
+
+#-------------------------------------
 
 user_minute_helper = {}  # {cid: x_minutes_ago_sent}
 user_hour_helper = {}  # {cid: {has_sent_in_hour: bool, hour:int(hour)}}
@@ -543,90 +621,9 @@ def check_for_time():
                 line_number = exc_traceback.tb_lineno
                 print(f"error happend in  while loop task 3: {e} line: {line_number}")
                 logging.error(f"error happend in while loop task 3: {e} line: {line_number}")
-                       
-                       
-                       
-#error happend in while loop task 2: cannot access local variable 'user_id' where it is not associated with a value
-#error happend in  while loop task 3: '>=' not supported between instances of 'int' and 'list' 
-                       
-    
-# response/save callback handler
-@bot.callback_query_handler(func=lambda call: "response" in call.data)
-def handle_response_callback(call):
-    user_id = int(call.from_user.id)
-    mid = int(call.message.message_id)
-    cid = int(call.message.chat.id)
-    data = str(call.data)
-    if data.startswith("response_save_new_"):
-        
-        new_code = int(data.split("_")[-1])
-        saved_news = [x[0] for x in DML.get_saved_newsbyTelegramid_generator(user_id)] # because the generator yields tuples
-        if new_code not in saved_news:
-            DML.add_saved_news(new_code, user_id)
-            bot.answer_callback_query(call.id, "ذخیره شد ✔️")
-        else:
-            bot.answer_callback_query(call.id, "این خبر قبلا ذخیره شده 💢")
-            
-        
-    elif call.data.startswith("positive_response_"):
-        
-        new_code = data.split("_")[-1]
-        
-        DML.change_interaction(user_id, int(new_code), "positive")
-        bot.answer_callback_query(call.id, "از اهمیت شما متشکریم 🎗️")
-        bot.edit_message_reply_markup(cid, mid, 
-                                      reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("📂 ذخیره", callback_data=f"response_save_new_{new_code}")))
-        status.pop(cid,  None)   
-        
-    elif call.data.startswith("negative_response_"):
-        
-        new_code = data.split("_")[-1]
-        
-        DML.change_interaction(user_id, int(new_code), "negative")
-        bot.answer_callback_query(call.id, "از اهمیت شما متشکریم 🎗️")
-        bot.edit_message_reply_markup(cid, mid, 
-                                      reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("📂 ذخیره", callback_data=f"response_save_new_{new_code}")))
-        status.pop(cid,  None)   
-        
-    elif data.startswith("write_response_"):
-        new_code = data.split("_")[-1]
-        bot.send_message(cid, "📝نظر خود را بنویسید: ")
-        status[cid] = f"{mid}_wait_comment_{new_code}"
-   
 
-# writing response handler
-@bot.message_handler(func= lambda m: "comment" in status.get(m.chat.id, " "))
-def store_new_interaction(m):
-    """
-    if users status if about writing their response to the shown news,
-    this function will save the entered response analyse to datatbase 
-    
-    """
-    try:
-        cid = int(m.chat.id)
-        mid = status[cid].split("_")[0]
-
-        if check_for_spam(cid):
-            return
-        
-        add_spam(cid)
-        pred = sentiment_model.predict(m.text, return_soft_en_prediction=True) # predict the emotion of sentence (positive/negative)
-        
-        new_code = status[cid].split("_")[-1]
-        DML.change_interaction(cid, int(new_code), str(pred)) # store to database
-        
-        bot.send_message(cid, "از اهمیت شما متشکریم 🎗️") 
-        bot.edit_message_reply_markup(cid, mid, 
-                                      reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("📂 ذخیره", callback_data=f"response_save_new_{new_code}")))
-        
-        status.pop(cid) # clear users status
-        
-    except Exception as e:
-        print(f"error happend while handling user comment: \n {e}")
-        logging.ERROR(f"error happend while handling user comment: {e}")
 
 #-------------------------------------
-
 
 def gen_topic_markup(cid, selected_topics: list,all_topics: list,
                      new=False,
@@ -765,7 +762,7 @@ def handle_topic_callback(call):
         selected = selected_topics_helper[cid]
         for topic in selected:
             DML.add_user_topic_ByTelgramid(cid, topic)
-        bot.edit_message_reply_markup(chat_id=cid, message_id=mid, reply_markup=None)
+        bot.edit_message_text("✔️سرفصل ها با موفقیت انتخاب شدند✔️",chat_id=cid, message_id=mid, reply_markup=None)
         selected_topics_helper.pop(cid)
         
     else:
@@ -806,6 +803,8 @@ def gen_c_markup(cid):
     markup = InlineKeyboardMarkup()
     btn = InlineKeyboardButton("بازگشت 🔙", callback_data="time_back")
     markup.add(btn)
+    btn = InlineKeyboardButton("🗑️حذف دقیقه قبلی🗑️", callback_data="delete_pre_time")
+    markup.add(btn)
     return markup
 
 @bot.message_handler(func=lambda message: message.text == "زمان گذاری ⏲️")
@@ -845,11 +844,18 @@ def handle_time_callback(call):
             status[cid] = f"type_minutes_{call.id}_{mid}"
             
         elif data == "time_back":
-            A_markup = gen_a_markup()
-            bot.edit_message_text("⏰لطفا یکی از گزینه ها رو انتخاب کنید⏰", cid, mid, reply_markup=A_markup)
+            set_timer(None, cid=cid)
             
         elif data == "cancel_time":
             bot.edit_message_text("فرایند لغو شد", cid, mid, reply_markup=None)
+            
+        elif data == "delete_pre_time":
+            if DML.has_times(cid):
+                    DML.delete_time(cid, mode="minutes")
+                    bot.answer_callback_query(call.id, "✔️دقیقه حذف شد✔️")
+                    set_timer(None, cid=cid)
+            else:
+                bot.answer_callback_query(call.id, "💢شما دقیقه قبلی ندارید💢")
             
         elif data == "confirm_time":
             hours = selected_time_helper.get(cid)

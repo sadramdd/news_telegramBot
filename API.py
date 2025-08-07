@@ -1,13 +1,14 @@
 import feedparser
 from bs4 import BeautifulSoup
-import requests
 import time
 import DML
 import logging
-import datetime
 from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
 from config import topics, RSS_URL
+from tf_idf_fitting import fit_news
 print("importing done")
 
 
@@ -15,11 +16,19 @@ print("importing done")
 
 
 def get_webpage_content(url, stop_time: int=10):
-    options = Options()
-    options.add_argument("--headless")  # Run in background
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    
-    driver = webdriver.Chrome(options=options)
+
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--remote-debugging-port=9222")
+
+    driver = webdriver.Chrome(
+        service=Service(ChromeDriverManager().install()),
+        options=chrome_options
+    )
+
     driver.get(url)
     
     # Wait for Cloudflare to resolve
@@ -78,6 +87,7 @@ def remove_duplicate(text: str):
 def main_loop():
     logging.getLogger('selenium').setLevel(logging.CRITICAL)
     logging.getLogger('urllib3').setLevel(logging.CRITICAL)
+    print("getting news started!")
     while True:
         logging.info("Starting new RSS fetch cycle")
         try:
@@ -118,7 +128,7 @@ def main_loop():
                             polished_content = remove_duplicate(full_content)
                             
                             summary = news_dict["summary"]
-                            
+                            fit_news(polished_content) # fitting tf_idf everytime getting news
                             result = DML.add_news(
                                 topic=news_topic,
                                 content=polished_content,
@@ -154,4 +164,4 @@ if __name__ == "__main__":
         logging.info("Shutting down")
     except Exception as e:
         logging.exception(f"Fatal error: {e}")
-print("end")
+    print("end")

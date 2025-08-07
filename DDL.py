@@ -1,13 +1,13 @@
 import mysql.connector
-from config import DB_CONFIG, topics
+from config import DB_CONFIG, topics, DB_name
 
 def create_database():
     try:
         connection = mysql.connector.connect(**DB_CONFIG)
         cursor = connection.cursor()
-        query = "CREATE DATABASE  IF NOT EXISTS TELEGRAMBOT"
+        query = f"CREATE DATABASE IF NOT EXISTS {DB_name}"
         cursor.execute(query)
-        query = "USE TELEGRAMBOT"
+        query = f"USE {DB_name}"
         cursor.execute(query)
         query = """CREATE TABLE  IF NOT EXISTS user(
                     telegram_id BIGINT PRIMARY KEY NOT NULL UNIQUE,
@@ -53,8 +53,15 @@ def create_database():
                     FOREIGN KEY (NEW_CODE) REFERENCES news(NEW_CODE),
                     PRIMARY KEY (TELEGRAM_ID, NEW_CODE))"""
         cursor.execute(query)
+        query = """CREATE TABLE IF NOT EXISTS user_timer (
+                        USER_TIME INT AUTO_INCREMENT PRIMARY KEY,
+                        TELEGRAM_ID BIGINT NOT NULL,
+                        TIME_VALUE BIGINT,
+                        MODE ENUM('minutes', 'hour'),
+                        FOREIGN KEY (TELEGRAM_ID) REFERENCES user(TELEGRAM_ID));"""
+        cursor.execute(query)
         connection.commit()
-        print("database created with tables: user, topics, news, userinteraction, user_topic, user_saved_news")
+        print("database created with tables: user, topics, news, userinteraction, user_topic, user_saved_news, user_timer")
     except mysql.connector.Error as sqlerror:
         print(f"mysql error occurred: {sqlerror}")
     
@@ -94,5 +101,5 @@ def add_topics(topics):
 
 if __name__ == "__main__":
     create_database()
-    DB_CONFIG["database"] = "TELEGRAMBOT"
+    DB_CONFIG["database"] = DB_name
     add_topics(topics=topics)

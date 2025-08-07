@@ -1,16 +1,9 @@
+'''
 from transformers import AutoConfig, AutoTokenizer, AutoModel,  AutoModelForSeq2SeqLM
 import torch
 from torch import nn
-from peft import get_peft_model, LoraConfig, TaskType
 
-
-"""
 def single_summarize(sentence, summarizer_model, tokenizer, device="cpu"):
-    '''
-    takes a single string (the sentence) and does the embedding and
-    tokenzation task with the models provided 
-    device indicates cpu/gpu to train on
-    '''
     inputs = tokenizer(sentence, return_tensors="pt", padding=True, truncation=True, max_length=1024).to(device)
 
     summarizer_model.to(device)
@@ -46,8 +39,6 @@ summarizer = AutoModelForSeq2SeqLM.from_pretrained(model_name) # loads pretraine
 summarizer = get_peft_model(summarizer, lora_config) #PEFT contfing
 
 summarizer.load_state_dict(torch.load(r"/content/drive/MyDrive/mt5_persian_finetuned_weights.pth")) #loading the fine tuned model weights
-"""
-
 
 keyword = "HooshvareLab/bert-fa-base-uncased"
 config = AutoConfig.from_pretrained(keyword)
@@ -197,3 +188,5 @@ class sentimentClassifier(nn.Module):
 sentiment_model = sentimentClassifier(768, 128, 64, 1, persian_bert, persian_bert_tokenizer)
 
 sentiment_model.load_state_dict(torch.load(r"telegram_bot_project/telegram_sentiment_model_weights.pth"))
+
+'''

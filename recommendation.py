@@ -9,7 +9,7 @@ from config import topics
 later on, im going to build a AI to do the jobs for both of functions blew (recommendations)
 """
 
-vectorizer = joblib.load(r"telegram_bot_project\tfidf_vectorizer.pkl")
+vectorizer = joblib.load('tfidf_vectorizer.pkl')
 
 
 def is_recent(datetimeObject: datetime.datetime,

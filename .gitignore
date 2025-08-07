@@ -3,5 +3,8 @@
 *.pth
 *.ipynb
 /__pycache__
+venv/
+/models
 /.ipynb_checkpoints
 config.py
+.env

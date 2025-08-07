@@ -1,12 +1,12 @@
 import mysql.connector
 from mysql.connector import Error
 import datetime
-from config import DB_CONFIG
+from config import DB_CONFIG, DB_name, log_file
 import logging
 import time
-DB_CONFIG["database"] =  "TELEGRAMBOT"
+DB_CONFIG["database"] =  DB_name
 
-logging.basicConfig(filename=r"telegram_bot_project\KHABARRESAN_logs.log",
+logging.basicConfig(filename=log_file,
                     level=logging.INFO,  encoding='utf-8',
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s') # this method sets the basic configurations for logging libray
 
